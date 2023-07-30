@@ -110,26 +110,6 @@ void ping(const std::string& targetIp) {
     timeout.tv_sec = 5;
     timeout.tv_usec = 0;
     close(sockfd);
-    /*
-    // Setting socket option to wait for max 5 seconds for a response
-    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
-        std::cerr << "Error setting socket options" << std::endl;
-        close(sockfd);
-        return;
-    }
-
-    char recvPacket[packetSize];
-    struct sockaddr_in recvAddr;
-    socklen_t addrLen = sizeof(recvAddr);
-
-    int receivedBytes = recvfrom(sockfd, recvPacket, packetSize, 0, (struct sockaddr*)&recvAddr, &addrLen);
-    if (receivedBytes <= 0) {
-        std::cerr << "Error receiving packet or timeout occurred" << std::endl;
-        close(sockfd);
-        return;
-    }
-
-    close(sockfd);*/
 }
 
 //arp를 보내는 함수
