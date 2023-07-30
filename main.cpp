@@ -1,20 +1,6 @@
-#include <cstdio>
-#include <pcap.h>
 #include "ethhdr.h"
 #include "arphdr.h"
-#include <iostream>
-#include <string>
-#include <fstream>
-#include <sstream>
-#include <unistd.h> 
-#include <numeric>
-#include <netinet/in.h>
-#include <netinet/ip.h>
-#include <netinet/ip_icmp.h>
-#include <arpa/inet.h>
-#include <sys/ioctl.h>
-#include <sys/socket.h>
-#include <net/if.h>
+#include "sarp_lx.h"
 
 #pragma pack(push, 1)
 struct EthArpPacket final {
@@ -106,10 +92,30 @@ void ping(const std::string& targetIp) {
         return;
     }
     
+    close(sockfd);
+    /*
     struct timeval timeout;
     timeout.tv_sec = 5;
     timeout.tv_usec = 0;
-    close(sockfd);
+    // Setting socket option to wait for max 5 seconds for a response
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+        std::cerr << "Error setting socket options" << std::endl;
+        close(sockfd);
+        return;
+    }
+
+    char recvPacket[packetSize];
+    struct sockaddr_in recvAddr;
+    socklen_t addrLen = sizeof(recvAddr);
+
+    int receivedBytes = recvfrom(sockfd, recvPacket, packetSize, 0, (struct sockaddr*)&recvAddr, &addrLen);
+    if (receivedBytes <= 0) {
+        std::cerr << "Error receiving packet or timeout occurred" << std::endl;
+        close(sockfd);
+        return;
+    }
+
+    close(sockfd);*/
 }
 
 //arp를 보내는 함수
